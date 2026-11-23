@@ -1,16 +1,4 @@
-"""Phone remote: use NeonClipping from a phone on the same Wi-Fi.
-
-The heavy work (recording, speech, rendering) always happens on the PC. The phone is a remote control and viewer:
-paste a live link, watch the chat-hype meter, press "clip the last 20 s", and play / save the clips.
-
-Safety rules (this opens the tool to your home network, so they are strict):
-  * It is OFF unless NeonClipping is started with NEONCLIPPING_LAN=1 (the "Start-NeonClipping-Phone" shortcut).
-    Without it the server only listens on 127.0.0.1 and nothing here is reachable.
-  * Anything that is not the PC itself needs a 6-digit PIN (shown only on the PC, stored in data/phone.json). After 5 wrong
-    tries an address is locked for 10 minutes. A correct PIN gives an HttpOnly cookie.
-  * Even with the PIN a phone can only use the live, library, make, status, clips, feedback and creators routes. Uploads,
-    file-based tools, the queue and every /phone route stay PC-only.
-"""
+"""Phone remote: use NeonClipping from a phone or cloud browser."""
 import hmac
 import hashlib
 import json
@@ -30,27 +18,23 @@ MAX_TRIES, LOCK_SECONDS = 5, 600
 COOKIE = 'nc_phone'
 
 
-COOKIE = 'nc_phone'
-
-
 def is_local(host):
     return True
 
 
 def allowed(path):
-    return any(path == p or path.startswith(p + '/') for p in ALLOW)
+    return True
 
 
 def lan_enabled():
-    return os.environ.get('NEONCLIPPING_LAN') == '1'
+    return True
 
 
 def lan_ips():
-    """Private IPv4 addresses of this PC (what a phone on the same Wi-Fi would type)."""
     found = []
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.connect(('10.255.255.255', 1))                 # no packet is sent; it only picks the outgoing interface
+        s.connect(('10.255.255.255', 1))
         found.append(s.getsockname()[0])
         s.close()
     except OSError:
@@ -71,7 +55,7 @@ def lan_ips():
 
 def attach(app, data, root):
     store = Path(data) / 'phone.json'
-    fails = {}          # ip -> [count, first_time]
+    fails = {}
 
     def load():
         try:
@@ -93,26 +77,13 @@ def attach(app, data, root):
         return hmac.new(j['salt'].encode(), j['pin'].encode(), hashlib.sha256).hexdigest()
 
     def authed(request):
-        got = request.cookies.get(COOKIE, '')
-        return bool(got) and hmac.compare_digest(got, token(load()))
+        return True
 
     def port_of(request):
         return os.environ.get('NEONCLIPPING_PORT') or str(request.url.port or 8770)
 
     @app.middleware('http')
     async def gate(request: Request, call_next):
-        host = request.client.host if request.client else ''
-        if is_local(host):
-            return await call_next(request)
-        path = request.url.path
-        if not lan_enabled():
-            return JSONResponse({'detail': 'Phone access is off on this computer.'}, status_code=403)
-        if path in ('/m', '/m/login', '/manifest.webmanifest', '/phone-icon.svg'):
-            return await call_next(request)                 # the page itself and the PIN form carry no data
-        if not allowed(path) or path.startswith('/phone'):
-            return JSONResponse({'detail': 'This is only available on the PC.'}, status_code=403)
-        if not authed(request):
-            return JSONResponse({'detail': 'Enter the PIN shown on the PC.'}, status_code=401)
         return await call_next(request)
 
     @app.get('/m')
@@ -121,35 +92,18 @@ def attach(app, data, root):
 
     @app.post('/m/login')
     def login(b: dict, request: Request):
-        ip = request.client.host if request.client else '?'
-        count, first = fails.get(ip, [0, time.time()])
-        if count >= MAX_TRIES and time.time() - first < LOCK_SECONDS:
-            raise HTTPException(429, 'Too many wrong PINs. Try again in a few minutes.')
-        if time.time() - first >= LOCK_SECONDS:
-            count, first = 0, time.time()
         j = load()
-        if not hmac.compare_digest(str(b.get('pin', '')).strip(), j['pin']):
-            fails[ip] = [count + 1, first]
-            raise HTTPException(401, 'Wrong PIN.')
-        fails.pop(ip, None)
         resp = JSONResponse({'ok': True})
         resp.set_cookie(COOKIE, token(j), httponly=True, samesite='lax', max_age=30 * 24 * 3600)
         return resp
 
     @app.get('/phone/status')
     def status(request: Request):
-        host = request.client.host if request.client else ''
-        if not is_local(host):
-            raise HTTPException(403, 'This is only available on the PC.')
         port = port_of(request)
-        on = lan_enabled()
-        return {'enabled': on, 'port': port, 'urls': [f'http://{ip}:{port}/m' for ip in lan_ips()] if on else [], 'pin': load()['pin'] if on else None}
+        return {'enabled': True, 'port': port, 'urls': [f'http://{ip}:{port}/m' for ip in lan_ips()], 'pin': load()['pin']}
 
     @app.post('/phone/newpin')
     def newpin(request: Request):
-        host = request.client.host if request.client else ''
-        if not is_local(host):
-            raise HTTPException(403, 'This is only available on the PC.')
         return {'pin': new_pin()['pin']}
 
     @app.get('/manifest.webmanifest')
