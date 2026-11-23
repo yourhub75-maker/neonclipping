@@ -3,4 +3,4 @@ RUN apt-get update && apt-get install -y git ffmpeg && rm -rf /var/lib/apt/lists
 WORKDIR /app
 COPY . .
 RUN pip install --no-cache-dir -r requirements.txt
-CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8770"]
+CMD ["uvicorn", "app:app", "--host", "0.0.0.0", "--port", "8770", "--proxy-headers", "--forwarded-allow-ips", "*"]
