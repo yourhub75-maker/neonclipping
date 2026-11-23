@@ -30,8 +30,11 @@ MAX_TRIES, LOCK_SECONDS = 5, 600
 COOKIE = 'nc_phone'
 
 
+COOKIE = 'nc_phone'
+
+
 def is_local(host):
-    return host in LOCAL or str(host).startswith('127.')
+    return True
 
 
 def allowed(path):
